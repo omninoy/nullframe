@@ -1,0 +1,195 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  STABLE_RELEASE: "true"
+
+jobs:
+  release:
+    name: Build ${{ matrix.target }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: "windows-latest"
+            target: "x86_64-pc-windows-msvc"
+            args: "--target x86_64-pc-windows-msvc --no-sign --verbose"
+          - platform: "ubuntu-22.04"
+            target: "x86_64-unknown-linux-gnu"
+            args: "--target x86_64-unknown-linux-gnu --no-sign --verbose"
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout repository code
+        uses: actions/checkout@v4
+
+      - name: Disable autocrlf on Windows
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        run: git config --global core.autocrlf false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux build dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            pkg-config \
+            xdg-utils
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        run: pnpm build
+
+      - name: Verify static frontend
+        shell: bash
+        run: test -f dist/index.html
+
+      - name: Build proxy sidecar
+        shell: bash
+        working-directory: src-tauri
+        run: cargo build --bin nullframe-proxy --target ${{ matrix.target }} --release
+
+      - name: Copy proxy sidecar for Tauri
+        shell: bash
+        run: |
+          mkdir -p src-tauri/binaries
+          if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
+            cp "src-tauri/target/${{ matrix.target }}/release/nullframe-proxy.exe" \
+              "src-tauri/binaries/nullframe-proxy-${{ matrix.target }}.exe"
+          else
+            cp "src-tauri/target/${{ matrix.target }}/release/nullframe-proxy" \
+              "src-tauri/binaries/nullframe-proxy-${{ matrix.target }}"
+            chmod +x "src-tauri/binaries/nullframe-proxy-${{ matrix.target }}"
+          fi
+
+      - name: Download verified Xray-core sidecar
+        run: node src-tauri/download-xray.mjs --target ${{ matrix.target }}
+
+      - name: Build and upload Tauri bundles
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        with:
+          projectPath: ./src-tauri
+          tagName: ${{ github.ref_name }}
+          releaseName: "NullFrame ${{ github.ref_name }}"
+          releaseBody: |
+            NullFrame ${{ github.ref_name }} release for Windows and Linux.
+            - Full fingerprint editing and cross-OS profiles unlocked
+            - Integrated local Cookie Bot for automated profile warming
+            - Standalone local agent console with custom third-party AI models (OpenAI, Claude, Gemini, OpenRouter, Ollama)
+            - Proxy ping persistence, sorting by ping, flag/check alignment
+          releaseDraft: false
+          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') || contains(github.ref_name, 'alpha') }}
+          args: ${{ matrix.args }}
+
+      - name: Create portable Windows ZIP
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          VERSION="${TAG#v}"
+          PORTABLE_DIR="NullFrame-Browser-Portable"
+          mkdir -p "$PORTABLE_DIR"
+          if [[ -f "src-tauri/target/${{ matrix.target }}/release/nullframe.exe" ]]; then
+            cp "src-tauri/target/${{ matrix.target }}/release/nullframe.exe" "$PORTABLE_DIR/nullframe.exe"
+            cp "src-tauri/target/${{ matrix.target }}/release/nullframe.exe" "$PORTABLE_DIR/NullFrame.exe"
+          elif [[ -f "src-tauri/target/${{ matrix.target }}/release/nullframe.exe" ]]; then
+            cp "src-tauri/target/${{ matrix.target }}/release/nullframe.exe" "$PORTABLE_DIR/nullframe.exe"
+            cp "src-tauri/target/${{ matrix.target }}/release/nullframe.exe" "$PORTABLE_DIR/NullFrame.exe"
+          fi
+          if [[ -f "src-tauri/target/${{ matrix.target }}/release/nullframe-proxy.exe" ]]; then
+            cp "src-tauri/target/${{ matrix.target }}/release/nullframe-proxy.exe" "$PORTABLE_DIR/"
+          fi
+          if [[ -f "src-tauri/binaries/xray-${{ matrix.target }}.exe" ]]; then
+            cp "src-tauri/binaries/xray-${{ matrix.target }}.exe" "$PORTABLE_DIR/xray.exe"
+          fi
+          if [[ -f "src-tauri/binaries/xray-LICENSE.txt" ]]; then
+            mkdir -p "$PORTABLE_DIR/licenses"
+            cp "src-tauri/binaries/xray-LICENSE.txt" "$PORTABLE_DIR/licenses/Xray-core-LICENSE.txt"
+          fi
+          if [[ -f "src-tauri/target/${{ matrix.target }}/release/WebView2Loader.dll" ]]; then
+            cp "src-tauri/target/${{ matrix.target }}/release/WebView2Loader.dll" "$PORTABLE_DIR/"
+          fi
+          touch "$PORTABLE_DIR/.portable"
+          7z a "NullFrame_${VERSION}_x64-portable.zip" "$PORTABLE_DIR"
+          cp "NullFrame_${VERSION}_x64-portable.zip" "NullFrame_Browser_${VERSION}_x64-portable.zip"
+
+      - name: Upload portable Windows ZIP
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          VERSION="${TAG#v}"
+          gh release upload "$TAG" "NullFrame_${VERSION}_x64-portable.zip" --clobber
+          gh release upload "$TAG" "NullFrame_Browser_${VERSION}_x64-portable.zip" --clobber
+
+  checksums:
+    name: Publish SHA-256 Checksums
+    needs: [release]
+    if: always() && needs.release.result != 'cancelled'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download final release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir release-assets
+
+      - name: Generate and upload SHA256SUMS.txt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        working-directory: release-assets
+        run: |
+          find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\0' | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          gh release upload "$TAG" SHA256SUMS.txt --clobber --repo "$GITHUB_REPOSITORY"
