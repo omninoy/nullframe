@@ -1,0 +1,16 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=NullFrame
+Name[en]=NullFrame
+GenericName=Web Browser
+X-GNOME-FullName=NullFrame
+Comment=Local-first Anti-Detect Browser
+Exec=nullframe %u
+Icon=nullframe
+StartupNotify=true
+NoDisplay=false
+Categories=Network;WebBrowser;
+MimeType=x-scheme-handler/http;x-scheme-handler/https;text/html;application/xhtml+xml;
+StartupWMClass=nullframe
+Keywords=browser;web;internet;privacy;

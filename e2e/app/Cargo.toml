@@ -1,0 +1,9 @@
+[package]
+name = "nullframe-e2e"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+nullframe-lib = { package = "nullframe", path = "../../src-tauri", features = ["e2e"] }
+tauri-wd = "=0.2.2"

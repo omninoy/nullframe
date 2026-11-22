@@ -1,0 +1,11 @@
+{
+  "version": "156.0.8078.86",
+  "downloads": {
+    "linux-x64": "https://download.wayfern.com/wayfern-156.0.8078.80-7.7-linux-x64-portable.tar.xz",
+    "linux-arm64": null,
+    "macos-x64": null,
+    "macos-arm64": "https://download.wayfern.com/wayfern_156.0.8078.80-7.7_macos.dmg",
+    "windows-x64": "https://download.wayfern.com/wayfern-156.0.8078.80-7.7_windows_x64.zip",
+    "windows-arm64": null
+  }
+}
